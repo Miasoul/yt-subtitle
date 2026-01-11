@@ -6,6 +6,7 @@ import joblib
 import os
 import warnings
 import tempfile
+import traceback
 
 # 경고 억제
 warnings.filterwarnings('ignore', message='Trying to estimate tuning from empty frequency set')
@@ -64,23 +65,37 @@ class ScreamAnalyzer:
         """오디오 파일에서 비명 감지"""
         print(f"\n분석 중: {audio_path}")
         
+        # 파일 존재 및 크기 확인
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"파일이 존재하지 않음: {audio_path}")
+        
+        file_size = os.path.getsize(audio_path)
+        print(f"파일 크기: {file_size} bytes")
+        
+        if file_size == 0:
+            raise ValueError("빈 파일입니다")
+        
         # 오디오 로드
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                y, sr = librosa.load(audio_path, sr=22050)
+                y, sr = librosa.load(audio_path, sr=22050, res_type='kaiser_fast')
+            
+            if len(y) == 0:
+                raise ValueError("오디오 데이터가 비어있습니다")
+            
             duration = len(y) / sr
             print(f"오디오 길이: {duration:.1f}초")
+            
         except Exception as e:
-            print(f"오디오 로드 실패: {e}")
-            return []
+            print(f"오디오 로드 실패: {type(e).__name__}: {e}")
+            raise
         
         # 슬라이딩 윈도우 분석
         window_samples = int(window_size * sr)
         hop_samples = int(hop_size * sr)
         
         scream_detections = []
-        all_predictions = []  # 디버깅용: 모든 예측 저장
         total_windows = (len(y) - window_samples) // hop_samples
         
         print(f"분석 시작 (총 {total_windows}개 구간)")
@@ -101,29 +116,12 @@ class ScreamAnalyzer:
             # 비명 확률
             scream_prob = probability[1]
             
-            # 디버깅: 모든 예측 기록
-            all_predictions.append({
-                'time': i / sr,
-                'prediction': int(prediction),
-                'scream_prob': float(scream_prob)
-            })
-            
             if prediction == 1 and scream_prob >= threshold:
                 start_time = i / sr
                 end_time = (i + window_samples) / sr
                 scream_detections.append([start_time, end_time, float(scream_prob)])
         
-        # 디버깅 정보 출력
-        print(f"✓ 분석 완료")
-        print(f"총 분석 구간: {len(all_predictions)}개")
-        print(f"비명 예측(prediction=1): {sum(1 for p in all_predictions if p['prediction'] == 1)}개")
-        print(f"임계값 이상 구간: {len(scream_detections)}개")
-        
-        # 상위 5개 확률 출력
-        top_predictions = sorted(all_predictions, key=lambda x: x['scream_prob'], reverse=True)[:5]
-        print("상위 5개 비명 확률:")
-        for i, pred in enumerate(top_predictions, 1):
-            print(f"  {i}. 시간: {pred['time']:.1f}초, 확률: {pred['scream_prob']:.2%}, 예측: {pred['prediction']}")
+        print("✓ 분석 완료")
         
         # 인접한 구간 병합
         merged = self.merge_detections(scream_detections, merge_gap=1.5)
@@ -187,15 +185,20 @@ def analyze():
         if audio_file.filename == '':
             return jsonify({'error': '파일이 선택되지 않았습니다'}), 400
         
+        print(f"받은 파일: {audio_file.filename}, Content-Type: {audio_file.content_type}")
+        
         # 파라미터 가져오기
         window_size = float(request.form.get('window_size', 1.5))
         hop_size = float(request.form.get('hop_size', 1.0))
         threshold = float(request.form.get('threshold', 0.6))
         
         # 임시 파일로 저장
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename)[1]) as tmp_file:
+        file_ext = os.path.splitext(audio_file.filename)[1] or '.webm'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir='/tmp') as tmp_file:
             audio_file.save(tmp_file.name)
             temp_path = tmp_file.name
+        
+        print(f"임시 파일 저장: {temp_path}, 크기: {os.path.getsize(temp_path)} bytes")
         
         try:
             # 분석 실행
@@ -217,12 +220,15 @@ def analyze():
             # 임시 파일 삭제
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+                print(f"임시 파일 삭제: {temp_path}")
     
     except Exception as e:
-        print(f"에러 발생: {e}")
+        error_details = traceback.format_exc()
+        print(f"에러 발생:\n{error_details}")
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'type': type(e).__name__
         }), 500
 
 
