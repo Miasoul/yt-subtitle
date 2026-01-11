@@ -80,6 +80,7 @@ class ScreamAnalyzer:
         hop_samples = int(hop_size * sr)
         
         scream_detections = []
+        all_predictions = []  # 디버깅용: 모든 예측 저장
         total_windows = (len(y) - window_samples) // hop_samples
         
         print(f"분석 시작 (총 {total_windows}개 구간)")
@@ -100,12 +101,29 @@ class ScreamAnalyzer:
             # 비명 확률
             scream_prob = probability[1]
             
+            # 디버깅: 모든 예측 기록
+            all_predictions.append({
+                'time': i / sr,
+                'prediction': int(prediction),
+                'scream_prob': float(scream_prob)
+            })
+            
             if prediction == 1 and scream_prob >= threshold:
                 start_time = i / sr
                 end_time = (i + window_samples) / sr
                 scream_detections.append([start_time, end_time, float(scream_prob)])
         
-        print("✓ 분석 완료")
+        # 디버깅 정보 출력
+        print(f"✓ 분석 완료")
+        print(f"총 분석 구간: {len(all_predictions)}개")
+        print(f"비명 예측(prediction=1): {sum(1 for p in all_predictions if p['prediction'] == 1)}개")
+        print(f"임계값 이상 구간: {len(scream_detections)}개")
+        
+        # 상위 5개 확률 출력
+        top_predictions = sorted(all_predictions, key=lambda x: x['scream_prob'], reverse=True)[:5]
+        print("상위 5개 비명 확률:")
+        for i, pred in enumerate(top_predictions, 1):
+            print(f"  {i}. 시간: {pred['time']:.1f}초, 확률: {pred['scream_prob']:.2%}, 예측: {pred['prediction']}")
         
         # 인접한 구간 병합
         merged = self.merge_detections(scream_detections, merge_gap=1.5)
